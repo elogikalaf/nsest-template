@@ -14,15 +14,45 @@ datasource db {
 }
 
 model User {
-  id        Int         @id @default(autoincrement())
-  createAt  DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
-  email     String      @unique()
-  password      String
-  firstName String?
-  lastName  String?
-  phoneNumber String?
-  avatar String?
-  age String?
-  location String?
+  id           String         @id @default(cuid())
+  name         String?
+  email        String?        @unique
+  password     String?
+  organizaions Organization[]
+  isVerified   Boolean        @default(false)
+  isFirstLogin Boolean        @default(true)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+}
+
+model Developer {
+  id           String   @id @default(cuid())
+  name         String?
+  email        String?  @unique
+  password     String?
+  games        Games[]
+  isVerified   Boolean  @default(false)
+  isFirstLogin Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  industry  String?
+  location  String?
+  User      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Games {
+  id          String    @id @default(cuid())
+  name        String
+  content     String
+  description String
+  Developer   Developer @relation(fields: [developerId], references: [id], onDelete: Cascade)
+  developerId String
 }
