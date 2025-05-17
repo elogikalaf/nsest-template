@@ -7,6 +7,9 @@ import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
 import { ResponseSuccessModel } from "src/utils/responseSuccessModel.model";
 import { ResponseFailureModel } from "src/utils/responseFailureModel.model";
+import { VerifyCodeDto } from "./dto/verify-code.dto";
+import { Verify } from "node:crypto";
+import { VerifyCode } from "@prisma/client";
 
 @Injectable()
 export class AuthService {
@@ -62,8 +65,6 @@ export class AuthService {
     }
   }
 
-
-
   async register(dto: RegisterDto) {
     try {
       const { email, password, role } = dto;
@@ -86,11 +87,15 @@ export class AuthService {
         return failureResponse;
       }
 
-      const userWithoutPassword = { ...user, password };
+      const userWithoutPassword = { ...user, password: undefined };
+
       const token = await this.signToken(user.id, user.email);
+
+      const verifyCode = await this.createVerifyCode(user.id.toString(), role);
+
       const successResponse = new ResponseSuccessModel(
         HttpStatus.OK,
-        { user: userWithoutPassword, token: token },
+        { user: userWithoutPassword, token: token, code: verifyCode.code },
         'User logged in successfully',
       );
       // set firstLogin to false 
@@ -102,14 +107,6 @@ export class AuthService {
           isFirstLogin: false,
         },
       });
-      // create verify code  
-      // const verifyCode = await this.prisma.verifyCode.create({
-      //   data: {
-      //     userId: user.id,
-      //     code: Math.floor(100000 + Math.random() * 900000).toString(),
-      //     expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24),
-      //   },
-      // })
       return successResponse;
     } catch (error) {
       console.log(error);
@@ -131,6 +128,74 @@ export class AuthService {
     }
   }
 
+  async vertifyCode(verifyCodeDto: VerifyCodeDto) {
+    try {
+      const { code, role } = verifyCodeDto;
+
+      const table = role === 'user' ? 'User' : 'Developer';
+
+      const tokenRecord = await this.prisma.verifyCode.findUnique({
+        where: {
+          code
+        },
+      });
+
+      if (!tokenRecord) {
+        const failureResponse = new ResponseFailureModel(
+          HttpStatus.FORBIDDEN,
+          null,
+          'Invalid token',
+        );
+        return failureResponse;
+      }
+
+      const userId = tokenRecord.userId ? tokenRecord.userId : tokenRecord.developerId;
+
+      if (new Date(Date.now()) > tokenRecord.expiresAt) {
+        const failureResponse = new ResponseFailureModel(
+          HttpStatus.FORBIDDEN,
+          null,
+          'Token expired',
+        );
+        return failureResponse;
+      }
+
+      // Delete all user tokens after successful verification
+      await this.prisma.verifyCode.delete({
+        where: {
+          userId: userId,
+        },
+      });
+
+      // update the user record and set isVerified to true
+      const updatedUser = await this.prisma[table].update({
+        where: {
+          id: userId
+        },
+        data: {
+          isVerified: true
+        }
+      })
+
+      const updateUserWithoutPassword = { ...updatedUser, passsword: undefined }
+
+
+      const successResponse = new ResponseSuccessModel(
+        HttpStatus.OK,
+        updateUserWithoutPassword,
+        'Password reset successful',
+      );
+      return successResponse;
+    } catch (error) {
+      const failureResponse = new ResponseFailureModel(
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        error,
+        'Something went wrong',
+      );
+      return failureResponse;
+    }
+  }
+
 
   async signToken(userId: number, email: string) {
     const payload = {
@@ -141,6 +206,28 @@ export class AuthService {
       expiresIn: '30d',
       secret: this.config.get("JWT_SECRET")
     })
+  }
+
+  async createVerifyCode(userId: string, role: string) {
+      let code: string;
+      let existingCode: VerifyCode | null;
+
+      do {
+        code = Math.floor(100000 + Math.random() * 900000).toString();
+        existingCode = await this.prisma.verifyCode.findUnique({
+          where: { code },
+        });
+      } while (existingCode);
+
+      const verifyCode = await this.prisma.verifyCode.create({
+        data: {
+          code,
+          userId: userId,
+          expiresAt: new Date(Date.now() + 1000 * 60 * 5),
+        },
+      });
+    return verifyCode;
+
 
   }
 }

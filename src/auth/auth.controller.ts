@@ -4,6 +4,8 @@ import { RegisterDto, SignInDto } from "./dto";
 import { ApiBody, ApiOperation } from "@nestjs/swagger";
 import { ResponseFailureModel } from "src/utils/responseFailureModel.model";
 import { Request, Response } from "express";
+import { VerifyCodeDto } from "./dto/verify-code.dto";
+import { VerifyCode } from "@prisma/client";
 
 @Controller('auth')
 export class AuthController {
@@ -41,6 +43,19 @@ export class AuthController {
     }
     return res.status(200).json(result);
   }
+  @Post('verify-recovery-code')
+  async verifyToken(
+    @Body() verifyCodeDto: VerifyCodeDto,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    const result = await this.authService.vertifyCode(verifyCodeDto);
+    if (result instanceof ResponseFailureModel) {
+      return res.status(result.status).json(result);
+    }
+    return res.status(200).json(result);
+  }
+
 
 
 
