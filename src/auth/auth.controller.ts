@@ -27,7 +27,6 @@ export class AuthController {
     return res.status(201).json(result);
   }
 
-
   @ApiOperation({ summary: 'Login user' })
   @ApiBody({ type: SignInDto })
   @Post('login')

@@ -19,6 +19,7 @@ model User {
   email        String?        @unique
   password     String?
   organizaions Organization[]
+  verifyCode   VerifyCode?
   isVerified   Boolean        @default(false)
   isFirstLogin Boolean        @default(true)
   createdAt    DateTime       @default(now())
@@ -26,15 +27,16 @@ model User {
 }
 
 model Developer {
-  id           String   @id @default(cuid())
+  id           String      @id @default(cuid())
   name         String?
-  email        String?  @unique
+  email        String?     @unique
   password     String?
   games        Games[]
-  isVerified   Boolean  @default(false)
-  isFirstLogin Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  verifyCode   VerifyCode?
+  isVerified   Boolean     @default(false)
+  isFirstLogin Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
 }
 
 model Organization {
@@ -55,4 +57,20 @@ model Games {
   description String
   Developer   Developer @relation(fields: [developerId], references: [id], onDelete: Cascade)
   developerId String
+}
+
+model VerifyCode {
+  id          String  @id @default(cuid())
+  code        String  @unique
+  userId      String? @unique
+  developerId String? @unique
+
+  user      User?      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  developer Developer? @relation(fields: [developerId], references: [id], onDelete: Cascade)
+
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([developerId])
 }

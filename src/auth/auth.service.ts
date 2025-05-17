@@ -48,7 +48,7 @@ export class AuthService {
       const token = await this.signToken(user.id, user.email);
       const successResponse = new ResponseSuccessModel(
         HttpStatus.OK,
-        { userWithoutPassword, token: token },
+        { user: userWithoutPassword, token: token },
         'User logged in successfully',
       );
       return successResponse;
@@ -90,11 +90,20 @@ export class AuthService {
       const token = await this.signToken(user.id, user.email);
       const successResponse = new ResponseSuccessModel(
         HttpStatus.OK,
-        { userWithoutPassword, token: token },
+        { user: userWithoutPassword, token: token },
         'User logged in successfully',
       );
-      return successResponse;
+      // set firstLogin to false 
+      await this.prisma[table].update({
+        where: {
+          id: user.id,
+        },
+        data: {
+          isFirstLogin: false,
+        },
+      });
     } catch (error) {
+      console.log(error);
       if (error.code === 'P2002') {
         const failureResponse = new ResponseFailureModel(
           HttpStatus.FORBIDDEN,
