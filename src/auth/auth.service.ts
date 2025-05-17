@@ -102,6 +102,15 @@ export class AuthService {
           isFirstLogin: false,
         },
       });
+      // create verify code  
+      // const verifyCode = await this.prisma.verifyCode.create({
+      //   data: {
+      //     userId: user.id,
+      //     code: Math.floor(100000 + Math.random() * 900000).toString(),
+      //     expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24),
+      //   },
+      // })
+      return successResponse;
     } catch (error) {
       console.log(error);
       if (error.code === 'P2002') {
