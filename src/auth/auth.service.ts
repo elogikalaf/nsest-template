@@ -1,15 +1,14 @@
-import { ForbiddenException, HttpStatus, Injectable } from "@nestjs/common"
+import { HttpStatus, Injectable } from "@nestjs/common"
 import { PrismaService } from "src/prisma/prisma.service"
 import * as argon from 'argon2';
 import { RegisterDto, SignInDto } from "./dto";
-import { PrismaClientKnownRequestError } from "@prisma/client/runtime/library";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
 import { ResponseSuccessModel } from "src/utils/responseSuccessModel.model";
 import { ResponseFailureModel } from "src/utils/responseFailureModel.model";
 import { VerifyCodeDto } from "./dto/verify-code.dto";
 import { Verify } from "node:crypto";
-import { VerifyCode } from "@prisma/client";
+import { Person, VerifyCode } from "@prisma/client";
 
 @Injectable()
 export class AuthService {
@@ -19,15 +18,13 @@ export class AuthService {
     try {
       const { email, password, role } = dto;
 
-      const table = role === 'user' ? 'User' : 'Developer';
-
-      const user = await this.prisma[table].findUnique({
+      const person = await this.prisma.person.findUnique({
         where: {
           email: email,
         },
       });
 
-      if (!user) {
+      if (!person) {
         const failureResponse = new ResponseFailureModel(
           HttpStatus.FORBIDDEN,
           null,
@@ -36,7 +33,7 @@ export class AuthService {
         return failureResponse;
       }
 
-      const pwMatches = await argon.verify(user.password, password);
+      const pwMatches = await argon.verify(person.password, password);
       if (!pwMatches) {
         const failureResponse = new ResponseFailureModel(
           HttpStatus.FORBIDDEN,
@@ -46,16 +43,25 @@ export class AuthService {
         return failureResponse;
       }
 
-      const userWithoutPassword = { ...user, password: undefined };
+      const { password: _, ...userWithoutPasswordWithRole } = person;
 
-      const token = await this.signToken(user.id, user.email);
+
+      const token = await this.signToken(person.id, person.email);
       const successResponse = new ResponseSuccessModel(
         HttpStatus.OK,
-        { user: userWithoutPassword, token: token },
+        {
+          user:
+          {
+            ...userWithoutPasswordWithRole,
+            role
+          },
+          token,
+        },
         'User logged in successfully',
       );
       return successResponse;
     } catch (error) {
+      console.log(error);
       const failureResponse = new ResponseFailureModel(
         HttpStatus.INTERNAL_SERVER_ERROR,
         error.message,
@@ -69,16 +75,35 @@ export class AuthService {
     try {
       const { email, password, role } = dto;
 
-      const table = role === 'user' ? 'User' : 'Developer';
       const hash = await argon.hash(password);
 
-      const user = await this.prisma[table].create({
-        data: {
-          email: email,
-          password: hash
-        },
-      });
-      if (!user) {
+      let person: Person;
+
+      if (role == 'user') {
+        // create person with an empty user record by joining
+        person = await this.prisma.person.create({
+          data: {
+            email: email,
+            password: hash,
+            user: {
+              create: {}
+            }
+          },
+        });
+      } else {
+        // create person with an empty dev record by joining
+        person = await this.prisma.person.create({
+          data: {
+            email: email,
+            password: hash,
+            developer: {
+              create: {}
+            }
+          },
+        });
+      }
+      if (!person) {
+        console.log('error creating user');
         const failureResponse = new ResponseFailureModel(
           HttpStatus.INTERNAL_SERVER_ERROR,
           null,
@@ -87,21 +112,29 @@ export class AuthService {
         return failureResponse;
       }
 
-      const userWithoutPassword = { ...user, password: undefined };
+      const { password: _, ...personWithoutPasswordWithRole } = person;
 
-      const token = await this.signToken(user.id, user.email);
+      const token = await this.signToken(person.id, person.email);
 
-      const verifyCode = await this.createVerifyCode(user.id.toString(), role);
+      const verifyCode = await this.createVerifyCode(person.id.toString());
 
       const successResponse = new ResponseSuccessModel(
         HttpStatus.OK,
-        { user: userWithoutPassword, token: token, code: verifyCode.code },
+        {
+          user:
+          {
+            ...personWithoutPasswordWithRole,
+            role
+          },
+          token,
+          code: verifyCode.code
+        },
         'User logged in successfully',
       );
       // set firstLogin to false 
-      await this.prisma[table].update({
+      await this.prisma.person.update({
         where: {
-          id: user.id,
+          id: person.id,
         },
         data: {
           isFirstLogin: false,
@@ -109,6 +142,7 @@ export class AuthService {
       });
       return successResponse;
     } catch (error) {
+
       console.log(error);
       if (error.code === 'P2002') {
         const failureResponse = new ResponseFailureModel(
@@ -128,19 +162,18 @@ export class AuthService {
     }
   }
 
-  async vertifyCode(verifyCodeDto: VerifyCodeDto) {
+  async vertifyCode(verifyCodeDto: VerifyCodeDto, personId: string) {
     try {
       const { code, role } = verifyCodeDto;
 
-      const table = role === 'user' ? 'User' : 'Developer';
-
-      const tokenRecord = await this.prisma.verifyCode.findUnique({
+      const codeRecord = await this.prisma.verifyCode.findUnique({
         where: {
-          code
+          code,
+          personId
         },
       });
 
-      if (!tokenRecord) {
+      if (!codeRecord) {
         const failureResponse = new ResponseFailureModel(
           HttpStatus.FORBIDDEN,
           null,
@@ -149,9 +182,8 @@ export class AuthService {
         return failureResponse;
       }
 
-      const userId = tokenRecord.userId ? tokenRecord.userId : tokenRecord.developerId;
 
-      if (new Date(Date.now()) > tokenRecord.expiresAt) {
+      if (new Date(Date.now()) > codeRecord.expiresAt) {
         const failureResponse = new ResponseFailureModel(
           HttpStatus.FORBIDDEN,
           null,
@@ -160,33 +192,36 @@ export class AuthService {
         return failureResponse;
       }
 
+      if (!personId) {
+        console.log(personId)
+      }
       // Delete all user tokens after successful verification
       await this.prisma.verifyCode.delete({
         where: {
-          userId: userId,
+          personId: personId
         },
       });
 
       // update the user record and set isVerified to true
-      const updatedUser = await this.prisma[table].update({
+      const updatedPerson = await this.prisma.person.update({
         where: {
-          id: userId
+          id: personId
         },
         data: {
           isVerified: true
         }
       })
-
-      const updateUserWithoutPassword = { ...updatedUser, passsword: undefined }
+      const { password, ...updatedPersonWithoutPassword } = updatedPerson;
 
 
       const successResponse = new ResponseSuccessModel(
         HttpStatus.OK,
-        updateUserWithoutPassword,
-        'Password reset successful',
+        { user: updatedPersonWithoutPassword },
+        'Verified successfully',
       );
       return successResponse;
     } catch (error) {
+      console.log(error)
       const failureResponse = new ResponseFailureModel(
         HttpStatus.INTERNAL_SERVER_ERROR,
         error,
@@ -197,7 +232,7 @@ export class AuthService {
   }
 
 
-  async signToken(userId: number, email: string) {
+  async signToken(userId: string, email: string) {
     const payload = {
       id: userId,
       email
@@ -208,24 +243,85 @@ export class AuthService {
     })
   }
 
-  async createVerifyCode(userId: string, role: string) {
-      let code: string;
-      let existingCode: VerifyCode | null;
-
-      do {
-        code = Math.floor(100000 + Math.random() * 900000).toString();
-        existingCode = await this.prisma.verifyCode.findUnique({
-          where: { code },
-        });
-      } while (existingCode);
-
-      const verifyCode = await this.prisma.verifyCode.create({
-        data: {
-          code,
-          userId: userId,
-          expiresAt: new Date(Date.now() + 1000 * 60 * 5),
+  async resendCode(personId: string) {
+    try {
+      const person = await this.prisma.person.findUnique({
+        where: {
+          id: personId,
         },
       });
+
+      if (!person) {
+        const failureResponse = new ResponseFailureModel(
+          HttpStatus.FORBIDDEN,
+          null,
+          'User not found',
+        );
+        return failureResponse;
+      }
+
+      const verifyCode = await this.prisma.verifyCode.findUnique({
+        where: {
+          personId
+        },
+      });
+
+      const now = Date.now();
+
+      if (verifyCode) {
+        const codeSentTime = verifyCode.createdAt.getTime();
+        const twoMinutes = 2 * 60 * 1000;
+
+        if (now < codeSentTime + twoMinutes) {
+          return new ResponseFailureModel(
+            HttpStatus.FORBIDDEN,
+            null,
+            'Verification code already sent, please wait 2 minutes',
+          );
+        }
+
+        // Delete old code
+        await this.prisma.verifyCode.delete({ where: { personId } });
+      }
+
+      // create a new code
+      const newVerifyCode = await this.createVerifyCode(personId);
+
+      const successResponse = new ResponseSuccessModel(
+        HttpStatus.OK,
+        { code: newVerifyCode.code },
+        'Verification code resent successfully',
+      );
+      return successResponse;
+    } catch (error) {
+      console.log(error)
+      const failureResponse = new ResponseFailureModel(
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        error,
+        'Something went wrong',
+      );
+      return failureResponse;
+    }
+  }
+
+  async createVerifyCode(personId: string) {
+    let code: string;
+    let existingCode: VerifyCode | null;
+
+    do {
+      code = Math.floor(100000 + Math.random() * 900000).toString();
+      existingCode = await this.prisma.verifyCode.findUnique({
+        where: { code },
+      });
+    } while (existingCode);
+
+    const verifyCode = await this.prisma.verifyCode.create({
+      data: {
+        code,
+        personId,
+        expiresAt: new Date(Date.now() + 1000 * 60 * 5),
+      },
+    });
     return verifyCode;
 
 

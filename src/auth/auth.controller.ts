@@ -1,11 +1,12 @@
-import { Body, Controller, Get, Logger, Post, Req, Res } from "@nestjs/common";
+import { Body, Controller, Get, Logger, Post, Req, Res, UseGuards } from "@nestjs/common";
 import { AuthService } from "./auth.service";
 import { RegisterDto, SignInDto } from "./dto";
-import { ApiBody, ApiOperation } from "@nestjs/swagger";
+import { ApiBearerAuth, ApiBody, ApiOperation } from "@nestjs/swagger";
 import { ResponseFailureModel } from "src/utils/responseFailureModel.model";
 import { Request, Response } from "express";
 import { VerifyCodeDto } from "./dto/verify-code.dto";
 import { VerifyCode } from "@prisma/client";
+import { jwtGaurd } from "./gaurd";
 
 @Controller('auth')
 export class AuthController {
@@ -43,19 +44,37 @@ export class AuthController {
     }
     return res.status(200).json(result);
   }
-  @Post('verify-recovery-code')
-  async verifyToken(
+
+  @Post('verify-code')
+  @UseGuards(jwtGaurd)
+  @ApiBearerAuth()
+  async verifyCode(
     @Body() verifyCodeDto: VerifyCodeDto,
-    @Req() req: Request,
+    @Req() req,
     @Res() res: Response,
   ) {
-    const result = await this.authService.vertifyCode(verifyCodeDto);
+    const result = await this.authService.vertifyCode(verifyCodeDto, req.user['id']);
+    if (result instanceof ResponseFailureModel) {
+      return res.status(result.status).json(result);
+    }
+    return res.status(200).json(result);
+    res.json('hi')
+  }
+
+
+  @Get('resend-code')
+  @UseGuards(jwtGaurd)
+  @ApiBearerAuth()
+  async resendCode(
+    @Req() req,
+    @Res() res
+  ) {
+    const result = await this.authService.resendCode(req.user['id']);
     if (result instanceof ResponseFailureModel) {
       return res.status(result.status).json(result);
     }
     return res.status(200).json(result);
   }
-
 
 
 
